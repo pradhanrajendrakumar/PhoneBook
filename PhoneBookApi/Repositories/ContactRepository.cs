@@ -7,7 +7,7 @@ namespace PhoneBookApi.Repositories
     public class ContactRepository : IContactRepository
     {
         private readonly ILogger<ContactRepository> logger;
-        private IMongoCollection<Contact> _contactCollection;
+        private readonly IMongoCollection<Contact> _contactCollection;
         public ContactRepository(IMongoDatabase database, ILogger<ContactRepository> logger)
         {
             _contactCollection = database.GetCollection<Contact>("contacts");

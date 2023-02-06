@@ -1,6 +1,4 @@
-﻿using MongoDB.Bson.Serialization.Attributes;
-
-namespace PhoneBookApi.Services.ResponseModels
+﻿namespace PhoneBookApi.Services.ResponseModels
 {
     public class ContactResponse
     {

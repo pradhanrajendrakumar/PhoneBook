@@ -1,41 +1,23 @@
-using System.Text.Json;
-using System.Text;
 using Microsoft.AspNetCore.Mvc.ApiExplorer;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
-using MongoDB.Driver;
 using PhoneBookApi;
 using PhoneBookApi.HealthChecks;
 using PhoneBookApi.Repositories;
-using PhoneBookApi.Seed;
 using PhoneBookApi.Services;
 using Serilog;
 using Swashbuckle.AspNetCore.SwaggerGen;
-using Polly;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using HealthChecks.UI.Client;
 
 var builder = WebApplication.CreateBuilder(args);
 
-//builder.Services.AddW3CLogging((opt) =>
-//{
-//    opt.LoggingFields = Microsoft.AspNetCore.HttpLogging.W3CLoggingFields.All;
-//});
+builder.ConfigureMongoDb();
 
-var mongoClient = new MongoClient(builder.Configuration.GetConnectionString("default"));
-var policy = Policy.Handle<MongoConnectionException>()
-        .WaitAndRetry(10, i => TimeSpan.FromSeconds(30), (exception, timespan, retryCount, context) =>
-        {
-            // Log the retry information
-            Console.WriteLine($"MongoDB connection failed. Retrying in {timespan.Seconds} seconds...");
-        });
-
-builder.Services.AddSingleton<IMongoClient>(sp => policy.Execute(() => mongoClient));
-builder.Services.AddSingleton<IMongoDatabase>(x => x.GetRequiredService<IMongoClient>().GetDatabase("phonebook"));
-
-builder.Services.AddSingleton<SeedData>();
 builder.Services.AddScoped<IContactRepository, ContactRepository>();
 builder.Services.AddScoped<IContactService, ContactService>();
 builder.Services.AddTransient<IConfigureOptions<SwaggerGenOptions>, ConfigureSwaggerOptions>();
 builder.Services.AddSingleton<MongoDbHealthCheck>();
+builder.Services.AddSingleton<MongoDbSeedHealthCheck>();
 
 
 builder.ConfigureHealthChecks();
@@ -69,9 +51,6 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 var app = builder.Build();
 
-//app.UseW3CLogging();
-var seedData = app.Services.GetRequiredService<SeedData>();
-seedData.EnsureSeedData();
 
 app.UseSwagger();
 app.UseSerilogRequestLogging();
@@ -88,60 +67,25 @@ app.UseSwaggerUI(options =>
 app.UseHttpsRedirection();
 
 app.UseAuthorization();
-
-app.MapControllers();
-
-app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+app.MapHealthChecks("/liveness",new HealthCheckOptions
 {
-    ResultStatusCodes =
-    {
-        [HealthStatus.Healthy] = StatusCodes.Status200OK,
-        [HealthStatus.Degraded] = StatusCodes.Status200OK,
-        [HealthStatus.Unhealthy] = StatusCodes.Status503ServiceUnavailable
-    },
-    ResponseWriter = WriteResponse
+    Predicate = r => r.Name.Contains("self")
 });
+app.MapHealthChecks("/readiness",new HealthCheckOptions
+{
+    Predicate = r => r.Tags.Contains("ready")
+});
+app.MapHealthChecks("/health",new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+});
+app.MapControllers();
 
 app.Run();
 
-static Task WriteResponse(HttpContext context, HealthReport healthReport)
+public partial class Program
 {
-    context.Response.ContentType = "application/json; charset=utf-8";
 
-    var options = new JsonWriterOptions { Indented = true };
-
-    using var memoryStream = new MemoryStream();
-    using (var jsonWriter = new Utf8JsonWriter(memoryStream, options))
-    {
-        jsonWriter.WriteStartObject();
-        jsonWriter.WriteString("status", healthReport.Status.ToString());
-        jsonWriter.WriteStartObject("results");
-
-        foreach (var healthReportEntry in healthReport.Entries)
-        {
-            jsonWriter.WriteStartObject(healthReportEntry.Key);
-            jsonWriter.WriteString("status",
-                healthReportEntry.Value.Status.ToString());
-            jsonWriter.WriteString("description",
-                healthReportEntry.Value.Description);
-            jsonWriter.WriteStartObject("data");
-
-            foreach (var item in healthReportEntry.Value.Data)
-            {
-                jsonWriter.WritePropertyName(item.Key);
-
-                JsonSerializer.Serialize(jsonWriter, item.Value,
-                    item.Value?.GetType() ?? typeof(object));
-            }
-
-            jsonWriter.WriteEndObject();
-            jsonWriter.WriteEndObject();
-        }
-
-        jsonWriter.WriteEndObject();
-        jsonWriter.WriteEndObject();
-    }
-
-    return context.Response.WriteAsync(
-        Encoding.UTF8.GetString(memoryStream.ToArray()));
+    public static string Namespace = typeof(Program).Namespace;
+    public static string AppName = Namespace.Substring(Namespace.LastIndexOf('.',Namespace.LastIndexOf('.') - 1) + 1);
 }
